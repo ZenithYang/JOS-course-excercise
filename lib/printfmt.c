@@ -204,7 +204,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		case 'd':
 			num = getint(&ap, lflag);
 			if ((long long) num < 0) {
-				precede = -1; // if < 0, change the sign regardless of what format string says
+				precede = -1; //if negative, change sign no matter what format strings says
 				//putch('-', putdat);
 				num = -(long long) num;
 			}
@@ -279,7 +279,23 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
             const char *overflow_error = "\nwarning! The value %n argument pointed to has been overflowed!\n";
 
             // Your code here
-
+            char *res = va_arg(ap, char *);
+            if(NULL == res){
+                int tmp_len = strlen(null_error), tmp_cnt;
+                for(tmp_cnt = 0; tmp_cnt < tmp_len; ++tmp_cnt){
+                    putch(null_error[tmp_cnt], putdat);
+                }
+                (*(int *)putdat) = (*(int *)putdat) - tmp_len;
+            } else if(((*(char *)putdat) & 128) != 0){
+                int tmp_len = strlen(overflow_error), tmp_cnt;
+                for(tmp_cnt = 0; tmp_cnt < tmp_len; ++tmp_cnt){
+                    putch(overflow_error[tmp_cnt], putdat);
+                }
+                (*(int *)putdat) = (*(int *)putdat) - tmp_len;
+                (*res) = (*(char *)putdat);
+            } else {
+                (*res) = (*(char *)putdat);
+            }
             break;
         }
 
