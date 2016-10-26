@@ -214,6 +214,9 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 			// Replace this with your code.
 			// display a number in octal form and the form should begin with '0'
 			num = getuint(&ap, lflag);
+			if(num > 0){
+				putch('0', putdat);
+			}
 			base = 8;
 			goto number;
 			//putch('X', putdat);
