@@ -92,6 +92,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 	register int ch, err;
 	unsigned long long num;
 	int base, lflag, width, precision, altflag;
+	int precede = 0;
 	char padc;
 
 	while (1) {
@@ -112,9 +113,15 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 
 		// flag to pad on the right
 		case '-':
-			padc = '-';
+			// change padc to just before output, because the sign may change afterwards!
+			precede = -1;
 			goto reswitch;
-			
+
+		case '+':
+			// change padc to just before output, because the sign may change afterwards!
+			precede = 1;
+			goto reswitch;
+
 		// flag to pad with 0's instead of spaces
 		case '0':
 			padc = '0';
@@ -197,7 +204,8 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		case 'd':
 			num = getint(&ap, lflag);
 			if ((long long) num < 0) {
-				putch('-', putdat);
+				precede = -1; // if < 0, change the sign regardless of what format string says
+				//putch('-', putdat);
 				num = -(long long) num;
 			}
 			base = 10;
@@ -238,6 +246,15 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 			num = getuint(&ap, lflag);
 			base = 16;
 		number:
+			if(precede == 1){
+				putch('+', putdat);
+				padc = '+';
+				--width;
+			} else if(precede == -1){
+				putch('-', putdat);
+				padc = '-';
+				--width;
+			}
 			printnum(putch, putdat, num, base, width, padc);
 			break;
 
