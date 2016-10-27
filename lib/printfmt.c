@@ -114,7 +114,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 	register int ch, err;
 	unsigned long long num;
 	int base, lflag, width, precision, altflag;
-	int precede = 0;
+	int precede = 0, negflag = 0;
 	char padc;
 
 	while (1) {
