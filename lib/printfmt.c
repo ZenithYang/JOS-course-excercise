@@ -29,22 +29,44 @@ static const char * const error_string[MAXERROR] =
 };
 
 /*
+ * specific helper function to deal with %-, 
+ * Print number first, then the padding character.
+ */
+void printnum_helper(void (*putch)(int, void*), void *putdat,
+	 unsigned long long num, unsigned base, int width, int padc)
+{
+		if (num >= base) {
+			printnum_helper(putch, putdat, num / base, base, width - 1, padc);
+		}
+		//print number first
+		putch("0123456789abcdef"[num % base], putdat);
+}
+
+/*
  * Print a number (base <= 16) in reverse order,
  * using specified putch function and associated pointer putdat.
  */
 static void
 printnum(void (*putch)(int, void*), void *putdat,
-	 unsigned long long num, unsigned base, int width, int padc)
+	 unsigned long long num, unsigned base, int width, int padc,
+	 int negflag)
 {
 	// if cprintf'parameter includes pattern of the form "%-", padding
 	// space on the right side if neccesary.
 	// you can add helper function if needed.
 	// your code here:
+	if (-1 == negflag){ //if %- exists
+		printnum_helper(putch, putdat, num, base, width, padc);
+		// print any needed pad characters before first digit
+		while (--width > 0)
+			putch(padc, putdat);
+		return;
+	}
 
 
 	// first recursively print all preceding (more significant) digits
 	if (num >= base) {
-		printnum(putch, putdat, num / base, base, width - 1, padc);
+		printnum(putch, putdat, num / base, base, width - 1, padc, negflag);
 	} else {
 		// print any needed pad characters before first digit
 		while (--width > 0)
@@ -114,7 +136,8 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		// flag to pad on the right
 		case '-':
 			// change padc to just before output, because the sign may change afterwards!
-			precede = -1;
+			//precede = -1;
+			negflag = -1;
 			goto reswitch;
 
 		case '+':
@@ -250,12 +273,14 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 				putch('+', putdat);
 				padc = '+';
 				--width;
+			} else if(negflag == -1){
+				padc = ' ';
 			} else if(precede == -1){
 				putch('-', putdat);
 				padc = '-';
 				--width;
 			}
-			printnum(putch, putdat, num, base, width, padc);
+			printnum(putch, putdat, num, base, width, padc, negflag);
 			break;
 
         case 'n': {
