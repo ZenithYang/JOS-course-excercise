@@ -25,6 +25,7 @@ static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
 	{ "backtrace", "Trace back the stacks", mon_backtrace },
+	{ "time", "Display the excution time of a command", count_time}
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -56,6 +57,23 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 		(end-entry+1023)/1024);
 	return 0;
 }
+
+int count_time(int argc, char **argv, struct Trapframe *tf)
+{
+	int i;
+	uint64_t rtcnt = read_tsc();
+	//runcmd(argv[1], tf); //to save time, don't start over again
+	//instead, just the for part
+	for (i = 0; i < NCOMMANDS; i++) {
+		if (strcmp(argv[1], commands[i].name) == 0){
+			commands[i].func(argc, argv, tf);
+			break;
+		}
+	}
+	cprintf("kerninfo cycles: %u\n", read_tsc() - rtcnt);
+	return 0;
+}
+
 
 // Lab1 only
 // read the pointer to the retaddr on the stack
@@ -179,6 +197,7 @@ runcmd(char *buf, struct Trapframe *tf)
 	// Lookup and invoke the command
 	if (argc == 0)
 		return 0;
+
 	for (i = 0; i < NCOMMANDS; i++) {
 		if (strcmp(argv[0], commands[i].name) == 0)
 			return commands[i].func(argc, argv, tf);
