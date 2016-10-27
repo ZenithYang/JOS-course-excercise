@@ -66,6 +66,7 @@ END { printf("\n") }' | grep '^00000000 00000000 00000001 00000002 00000003 0000
 
 	syms=`grep "kern/init.c:.* test_backtrace" jos.out`
 	symcnt=`grep "kern/init.c:.* test_backtrace" jos.out | wc -l`
+	echo $symcnt
 	if [ $symcnt -eq 6 ]; then
 		score=`expr 10 + $score`
 		echo , Symbols OK $time
