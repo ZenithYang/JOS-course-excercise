@@ -24,6 +24,8 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "backtrace", "Trace back the stacks", mon_backtrace },
+	{ "time", "Display the excution time of a command", count_time}
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -55,6 +57,23 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 		(end-entry+1023)/1024);
 	return 0;
 }
+
+int count_time(int argc, char **argv, struct Trapframe *tf)
+{
+	int i;
+	uint64_t rtcnt = read_tsc();
+	//runcmd(argv[1], tf); //to save time, don't start over again
+	//instead, just the for part
+	for (i = 0; i < NCOMMANDS; i++) {
+		if (strcmp(argv[1], commands[i].name) == 0){
+			commands[i].func(argc, argv, tf);
+			break;
+		}
+	}
+	cprintf("kerninfo cycles: %u\n", read_tsc() - rtcnt);
+	return 0;
+}
+
 
 // Lab1 only
 // read the pointer to the retaddr on the stack
@@ -89,9 +108,7 @@ start_overflow(void)
     char *pret_addr;
 
 	// Your code here.
-    
-
-
+    do_overflow();
 }
 
 void
@@ -105,6 +122,39 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
     overflow_me();
+
+    cprintf("Stack backtrace:\n");
+    uint32_t ebp = read_ebp();
+    uint32_t eip = read_eip();
+    while(1)
+    {
+        cprintf("eip %08x  ebp %08x  ", eip, ebp);
+        cprintf("args ");
+        int i;
+        for(i = 0; i < 3; ++i)
+        {
+            cprintf("%08x ", *(uint32_t *)(ebp + 8 + 4*i));
+        }
+        cprintf("%08x\n", *(uint32_t *)(eip + 8 + 3*4));
+        cprintf("	 ");
+        struct Eipdebuginfo get_result;
+        memset(&get_result, 0, sizeof(struct Eipdebuginfo));
+        if(debuginfo_eip(*(int *)(ebp + 4), &get_result) == 0)
+        {
+            cprintf("%s:%d: ", get_result.eip_file, get_result.eip_line);
+            const char *tmp = get_result.eip_fn_name;
+            while(*tmp != ':' && *tmp != '\0'){
+                cprintf("%c", *tmp);
+                tmp++;
+            }
+            cprintf("+%d\n",  get_result.eip_line);
+        }
+        if(ebp == 0)
+            break;
+        eip = *(uint32_t *)(ebp + 4);
+        ebp = *(uint32_t *)ebp;
+    }
+
     cprintf("Backtrace success\n");
 	return 0;
 }
@@ -147,6 +197,7 @@ runcmd(char *buf, struct Trapframe *tf)
 	// Lookup and invoke the command
 	if (argc == 0)
 		return 0;
+
 	for (i = 0; i < NCOMMANDS; i++) {
 		if (strcmp(argv[0], commands[i].name) == 0)
 			return commands[i].func(argc, argv, tf);
