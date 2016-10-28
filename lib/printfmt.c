@@ -29,44 +29,22 @@ static const char * const error_string[MAXERROR] =
 };
 
 /*
- * specific helper function to deal with %-, 
- * Print number first, then the padding character.
- */
-void printnum_helper(void (*putch)(int, void*), void *putdat,
-	 unsigned long long num, unsigned base, int width, int padc)
-{
-		if (num >= base) {
-			printnum_helper(putch, putdat, num / base, base, width - 1, padc);
-		}
-		//print number first
-		putch("0123456789abcdef"[num % base], putdat);
-}
-
-/*
  * Print a number (base <= 16) in reverse order,
  * using specified putch function and associated pointer putdat.
  */
 static void
 printnum(void (*putch)(int, void*), void *putdat,
-	 unsigned long long num, unsigned base, int width, int padc,
-	 int negflag)
+	 unsigned long long num, unsigned base, int width, int padc)
 {
 	// if cprintf'parameter includes pattern of the form "%-", padding
 	// space on the right side if neccesary.
 	// you can add helper function if needed.
 	// your code here:
-	if (-1 == negflag){ //if %- exists
-		printnum_helper(putch, putdat, num, base, width, padc);
-		// print any needed pad characters before first digit
-		while (--width > 0)
-			putch(padc, putdat);
-		return;
-	}
 
 
 	// first recursively print all preceding (more significant) digits
 	if (num >= base) {
-		printnum(putch, putdat, num / base, base, width - 1, padc, negflag);
+		printnum(putch, putdat, num / base, base, width - 1, padc);
 	} else {
 		// print any needed pad characters before first digit
 		while (--width > 0)
@@ -114,7 +92,6 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 	register int ch, err;
 	unsigned long long num;
 	int base, lflag, width, precision, altflag;
-	int precede = 0, negflag = 0;
 	char padc;
 
 	while (1) {
@@ -135,16 +112,9 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 
 		// flag to pad on the right
 		case '-':
-			// change padc to just before output, because the sign may change afterwards!
-			//precede = -1;
-			negflag = -1;
+			padc = '-';
 			goto reswitch;
-
-		case '+':
-			// change padc to just before output, because the sign may change afterwards!
-			precede = 1;
-			goto reswitch;
-
+			
 		// flag to pad with 0's instead of spaces
 		case '0':
 			padc = '0';
@@ -227,8 +197,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		case 'd':
 			num = getint(&ap, lflag);
 			if ((long long) num < 0) {
-				precede = -1; //if negative, change sign no matter what format strings says
-				//putch('-', putdat);
+				putch('-', putdat);
 				num = -(long long) num;
 			}
 			base = 10;
@@ -244,15 +213,9 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		case 'o':
 			// Replace this with your code.
 			// display a number in octal form and the form should begin with '0'
-			num = getuint(&ap, lflag);
-			if(num > 0){
-				putch('0', putdat);
-			}
-			base = 8;
-			goto number;
-			//putch('X', putdat);
-			//putch('X', putdat);
-			//putch('X', putdat);
+			putch('X', putdat);
+			putch('X', putdat);
+			putch('X', putdat);
 			break;
 
 		// pointer
@@ -269,18 +232,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 			num = getuint(&ap, lflag);
 			base = 16;
 		number:
-			if(precede == 1){
-				putch('+', putdat);
-				padc = '+';
-				--width;
-			} else if(negflag == -1){
-				padc = ' ';
-			} else if(precede == -1){
-				putch('-', putdat);
-				padc = '-';
-				--width;
-			}
-			printnum(putch, putdat, num, base, width, padc, negflag);
+			printnum(putch, putdat, num, base, width, padc);
 			break;
 
         case 'n': {
@@ -304,23 +256,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
             const char *overflow_error = "\nwarning! The value %n argument pointed to has been overflowed!\n";
 
             // Your code here
-            char *res = va_arg(ap, char *);
-            if(NULL == res){
-                int tmp_len = strlen(null_error), tmp_cnt;
-                for(tmp_cnt = 0; tmp_cnt < tmp_len; ++tmp_cnt){
-                    putch(null_error[tmp_cnt], putdat);
-                }
-                (*(int *)putdat) = (*(int *)putdat) - tmp_len;
-            } else if(((*(char *)putdat) & 128) != 0){
-                int tmp_len = strlen(overflow_error), tmp_cnt;
-                for(tmp_cnt = 0; tmp_cnt < tmp_len; ++tmp_cnt){
-                    putch(overflow_error[tmp_cnt], putdat);
-                }
-                (*(int *)putdat) = (*(int *)putdat) - tmp_len;
-                (*res) = (*(char *)putdat);
-            } else {
-                (*res) = (*(char *)putdat);
-            }
+
             break;
         }
 
