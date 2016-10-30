@@ -59,6 +59,9 @@ int	page_insert(pde_t *pgdir, struct Page *pp, void *va, int perm);
 void	page_remove(pde_t *pgdir, void *va);
 struct Page *page_lookup(pde_t *pgdir, void *va, pte_t **pte_store);
 void	page_decref(struct Page *pp);
+struct Page *page_alloc_npages(int alloc_flags, int n);
+int page_free_npages(struct Page *pp, int n);
+
 
 void	tlb_invalidate(pde_t *pgdir, void *va);
 

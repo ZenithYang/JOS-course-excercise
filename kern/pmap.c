@@ -169,9 +169,12 @@ mem_init(void)
 	//cprintf("DEBUG=============: check_page_free_list(1) finished.\n");
 	check_page_alloc();
 	//cprintf("DEBUG=============: check_page_alloc() finished.\n");
-	check_page();
+	//check_page();
+	cprintf("DEBUG=============: check_page() finished.\n");
 	check_n_pages();
+	//cprintf("DEBUG=============: check_n_pages() finished.\n");
 	check_realloc_npages();
+	cprintf("DEBUG=============: check_realloc_pages() finished.\n");
 
 	//////////////////////////////////////////////////////////////////////
 	// Now we set up virtual memory
@@ -274,7 +277,8 @@ page_init(void)
 
 	page_free_list = NULL; //initialize
 	memset(&pages[0], 0, sizeof(struct Page)); //Get rid of first page
-	for (i = 1; i < npages; i++) {
+	//for (i = 1; i < npages; i++) {
+	for (i = npages - 1; i >= 1; --i) { //reverse to get continous pages
 		if(i < range1 || i >= range2){
 			pages[i].pp_ref = 0;
 			pages[i].pp_link = page_free_list;
@@ -316,6 +320,22 @@ page_alloc(int alloc_flags)
 	return NULL;
 }
 
+void set_n_zeros(struct Page *pp, int n, int alloc_flags)
+{
+	if(n <= 0)
+		return;
+
+	size_t i;
+	struct Page *tmp = pp;
+	for(i = 0; i < n; ++i){
+		if(alloc_flags & ALLOC_ZERO){
+			memset(page2kva(tmp), 0, PGSIZE);
+		}
+		tmp->pp_ref++;
+		tmp = tmp->pp_link;
+	}
+}
+
 //
 // Allocates n continuous physical page. If (alloc_flags & ALLOC_ZERO), fills the n pages 
 // returned physical page with '\0' bytes.  Does NOT increment the reference
@@ -335,6 +355,39 @@ struct Page *
 page_alloc_npages(int alloc_flags, int n)
 {
 	// Fill this function
+
+	//The simplest way is to brute-force
+	struct Page *ctrl = NULL;
+	struct Page *prev = page_free_list, *next = prev;
+	size_t i;
+
+	if(n <= 0)
+		return NULL;
+
+	while(next != NULL)
+	{
+		next= prev->pp_link;
+		struct Page *tmp_prev = prev, *tmp = tmp_prev;
+
+		//check if has n continous pages;
+		for(i = 0; i < n && tmp; ++i){
+			tmp_prev = tmp;
+			tmp = tmp->pp_link;
+			if(page2kva(tmp) - page2kva(tmp_prev) != PGSIZE)
+				break;
+		}
+		if(i == n){ // Get one
+			if(ctrl == NULL){ //means prev is at the top
+				page_free_list = tmp;
+			} else { //Otherwise need to delete it from free_list
+				ctrl->pp_link = tmp;
+			}
+			set_n_zeros(prev, n, alloc_flags);
+			return prev;
+		}
+		ctrl = prev;
+		prev = next;
+	}
 	return NULL;
 }
 
@@ -347,7 +400,28 @@ int
 page_free_npages(struct Page *pp, int n)
 {
 	// Fill this function
-	return -1;
+	if(n <= 0 || NULL == pp)
+	{
+		return -1;
+	}
+
+	assert(check_continuous(pp, n));
+
+	struct Page *tmp_prev = pp, *tmp = pp; 
+	int i;
+	for( i = 0; i < n; ++i )
+	{
+		tmp = tmp->pp_link;
+		tmp_prev->pp_ref--;
+		if(n - 1 == i)
+			break;
+		tmp_prev = tmp;
+	}
+
+	tmp_prev->pp_link = page_free_list;
+	page_free_list = pp;
+	
+	return 0;
 }
 
 //
@@ -930,9 +1004,11 @@ check_n_pages(void)
 	page_free(pp0);
 	pp0 = page_alloc_npages(ALLOC_ZERO, 4);
 	addr = (char*)page2kva(pp0);
-	
+	//cprintf("%p %p\n", addr, pages);
 	// Check Zero
 	for( i = 0; i < 4 * PGSIZE; i++ ){
+		if(addr[i] != 0)
+			cprintf("%d %d\n", i, addr[i]);
 		assert(addr[i] == 0);
 	}
 
