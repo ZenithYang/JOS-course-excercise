@@ -10,6 +10,8 @@
 #include <kern/pmap.h>
 #include <kern/kclock.h>
 
+static int check_inuse(struct Page *pp, int n);
+
 // These variables are set by i386_detect_memory()
 size_t npages;			// Amount of physical memory (in pages)
 static size_t npages_basemem;	// Amount of base memory (in pages)
@@ -174,7 +176,7 @@ mem_init(void)
 	check_n_pages();
 	//cprintf("DEBUG=============: check_n_pages() finished.\n");
 	check_realloc_npages();
-	cprintf("DEBUG=============: check_realloc_pages() finished.\n");
+	//cprintf("DEBUG=============: check_realloc_pages() finished.\n");
 
 	//////////////////////////////////////////////////////////////////////
 	// Now we set up virtual memory
@@ -336,6 +338,18 @@ void set_n_zeros(struct Page *pp, int n, int alloc_flags)
 	}
 }
 
+static struct Page* find_last(struct Page* pp, int n)
+{
+	struct Page *result = pp;
+	size_t i;
+
+	for(i = 0; i < n; ++i)
+	{
+		result = result->pp_link;
+	}
+	return result;
+}
+
 //
 // Allocates n continuous physical page. If (alloc_flags & ALLOC_ZERO), fills the n pages 
 // returned physical page with '\0' bytes.  Does NOT increment the reference
@@ -356,6 +370,7 @@ page_alloc_npages(int alloc_flags, int n)
 {
 	// Fill this function
 
+	
 	//The simplest way is to brute-force
 	struct Page *ctrl = NULL;
 	struct Page *prev = page_free_list, *next = prev;
@@ -363,7 +378,25 @@ page_alloc_npages(int alloc_flags, int n)
 
 	if(n <= 0)
 		return NULL;
-
+	
+	while(NULL != next)
+	{
+		next = prev->pp_link;
+		if(check_continuous(prev, n) && check_inuse(prev, n))
+		{
+			if(ctrl == NULL){ //means prev is at the top
+				page_free_list = prev;
+			} else { //Otherwise need to delete it from free_list
+				ctrl->pp_link = find_last(prev, n)->pp_link;
+			}
+			set_n_zeros(prev, n, alloc_flags);
+			return prev;
+			
+		}
+		ctrl = prev;
+		prev = next;
+	}
+	/*
 	while(next != NULL)
 	{
 		next= prev->pp_link;
@@ -373,10 +406,10 @@ page_alloc_npages(int alloc_flags, int n)
 		for(i = 0; i < n && tmp; ++i){
 			tmp_prev = tmp;
 			tmp = tmp->pp_link;
-			if(page2kva(tmp) - page2kva(tmp_prev) != PGSIZE)
+			if(page2pa(tmp) - page2pa(tmp_prev) != PGSIZE)
 				break;
 		}
-		if(i == n){ // Get one
+		if(i == n && check_inuse(prev, n)){ // Get one
 			if(ctrl == NULL){ //means prev is at the top
 				page_free_list = tmp;
 			} else { //Otherwise need to delete it from free_list
@@ -387,7 +420,8 @@ page_alloc_npages(int alloc_flags, int n)
 		}
 		ctrl = prev;
 		prev = next;
-	}
+	}*/
+	
 	return NULL;
 }
 
@@ -442,6 +476,18 @@ page_free(struct Page *pp)
 	page_free_list = pp;
 }
 
+static int check_inuse(struct Page *pp, int n)
+{
+	struct Page *tmp = pp;
+	size_t i;
+	for(i = 0; i < n; ++i){
+		if(tmp->pp_ref > 0)
+			return 0; //not free
+		tmp = tmp->pp_link;
+	}
+	return 1; //All are free
+}
+
 //
 // Return new_n continuous pages based on the allocated old_n pages.
 // You can man realloc for better understanding.
@@ -451,7 +497,64 @@ struct Page *
 page_realloc_npages(struct Page *pp, int old_n, int new_n)
 {
 	// Fill this function
-	return NULL;
+	if(old_n < 0 || new_n < 0) //Check number
+		return NULL;
+
+	if(NULL == pp){ //Check if NULL
+		if(old_n == 0 && new_n > 0)
+			return page_alloc_npages(ALLOC_ZERO, new_n);
+		return NULL;
+	}
+
+	if(new_n == old_n){
+		return pp;
+	} else if(new_n < old_n){
+		//Just free the last (old_n - new_n) pages
+		size_t i;
+		struct Page *tmp = pp;
+		for(i = 0; i < new_n; ++i)
+			tmp = tmp->pp_link;
+		//cprintf("[page_realloc_pages]: Branch 2 %p (%d)\n", tmp, old_n - new_n);
+		page_free_npages(tmp, old_n - new_n);
+		return pp;
+	} else {
+		//most complicated part
+		size_t i;
+		struct Page *prev = pp, *tmp = pp;
+		for(i = 0; i < old_n; ++i){
+			 // find last Page
+			//cprintf("i == %d, tmp == %p\n", i, tmp);
+			tmp = tmp->pp_link;
+			if(i < old_n - 1)
+				prev = tmp;
+		}
+		//cprintf("[page_realloc_pages]: Branch 3 %p (%d)\n", tmp, old_n, new_n);
+		//cprintf("[%d %d %d]\n", check_continuous(tmp, new_n - old_n), check_inuse(tmp, new_n - old_n), page2pa(tmp) - page2pa(prev));
+		if(check_continuous(tmp, new_n - old_n) && check_inuse(tmp, new_n - old_n) && (page2pa(tmp) - page2pa(prev) == PGSIZE))
+		{
+			//cprintf("[page_realloc_pages]: Branch 4 %p (%d, %d)\n", tmp, old_n, new_n);
+			set_n_zeros(tmp, new_n - old_n, ALLOC_ZERO);
+			return pp;
+		} else {
+			// allocate a whole new area and then free the original Pages
+			//cprintf("[page_realloc_pages]: Branch 5 (%d, %d)\n", old_n, new_n);
+			struct Page *result = page_alloc_npages(ALLOC_ZERO, new_n);
+			//cprintf("[page_realloc_pages]: Branch 5-1 %p\n", result);
+/*
+//DEBUG
+struct Page* debug = result;
+for(i = 0; i < new_n; ++i)
+{
+	cprintf("i == %d, debug == %p sub == %x\n", i, debug, page2pa(debug->pp_link) - page2pa(debug));
+	debug = debug->pp_link;
+}
+//END DEBUG
+*/
+			memmove(page2kva(result), page2kva(pp), old_n*PGSIZE);
+			page_free_npages(pp, old_n);
+			return result;
+		}
+	}
 }
 
 //
@@ -950,6 +1053,26 @@ check_page(void)
 }
 
 static int
+check_continuous_debug(struct Page *pp, int num_page)
+{
+	struct Page *tmp; 
+	int i;
+	for( tmp = pp, i = 0; i < num_page - 1; tmp = tmp->pp_link, i++ )
+	{
+		if(tmp == NULL) 
+		{
+			return 0;
+		}
+		cprintf("[CON]: i == %d, tmp = %p, tmp->next == %p %x\n", i, tmp, tmp->pp_link, page2pa(tmp->pp_link) - page2pa(tmp));
+		if( (page2pa(tmp->pp_link) - page2pa(tmp)) != PGSIZE )
+		{
+			return 0;
+		}
+	}
+	return 1;
+}
+
+static int
 check_continuous(struct Page *pp, int num_page)
 {
 	struct Page *tmp; 
@@ -1038,20 +1161,24 @@ check_realloc_npages(void)
 
 	// Assign eight continuous pages
 	pp = page_alloc_npages(0, 8);
+	//cprintf("[check_realloc]: 1 %p\n", pp);
 	assert(check_continuous(pp, 8));
 
 	// Realloc to 4 pages
 	pp0 = page_realloc_npages(pp, 8, 4);
+	//cprintf("[check_realloc]: 2 %p\n", pp0);
 	assert(pp0 == pp);
 	assert(check_continuous(pp, 4));
 
 	// Realloc to 6 pages
 	pp0 = page_realloc_npages(pp, 4, 6);
+	//cprintf("[check_realloc]: 3 %p\n", pp0);
 	assert(pp0 == pp);
 	assert(check_continuous(pp, 6));
 
 	// Realloc to 12 pages
 	pp0 = page_realloc_npages(pp, 6, 12);
+	//cprintf("[check_realloc]: 4 %p\n", pp0);
 	assert(check_continuous(pp0, 12));
 
 	// Free 12 continuous pages
