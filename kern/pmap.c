@@ -171,7 +171,7 @@ mem_init(void)
 	//cprintf("DEBUG=============: check_page_free_list(1) finished.\n");
 	check_page_alloc();
 	//cprintf("DEBUG=============: check_page_alloc() finished.\n");
-	//check_page();
+	check_page();
 	cprintf("DEBUG=============: check_page() finished.\n");
 	check_n_pages();
 	//cprintf("DEBUG=============: check_n_pages() finished.\n");
@@ -316,7 +316,8 @@ page_alloc(int alloc_flags)
 			char *tmp = page2kva(result);
 			memset(tmp, 0, PGSIZE);
 		}
-		result->pp_ref++;
+		//result->pp_ref++;
+		//result->pp_link = NULL; //set pp_link of result to NULL		
 		return result;
 	}
 	return NULL;
@@ -467,12 +468,10 @@ page_free(struct Page *pp)
 {
 	// Fill this function in
 	// JUst add it to the head of free_list
+	if(pp->pp_ref <= 0)
+		;
+		//panic("Page not in use!\n");
 	pp->pp_link = page_free_list;
-	if(pp->pp_ref > 0){
-		pp->pp_ref--;
-	}else{
-		panic("Page not in use!\n");
-	}
 	page_free_list = pp;
 }
 
@@ -594,7 +593,27 @@ pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// Fill this function in
-	return NULL;
+	uint32_t pde_idx = PDX(va), pte_idx = PTX(va);
+	pte_t *tmp = KADDR(PTE_ADDR(pgdir[pde_idx])); //Watch OUT! Need to convert to KADDR!!!!!!!!!
+	if(pgdir[pde_idx] & PTE_P) //if valid
+	{
+		cprintf("[pgdir_walk]: Got one in %p result=%p!!\n", tmp, &tmp[pte_idx]);
+		return &tmp[pte_idx];
+	}
+
+	//else
+	if(create == 0)
+		return NULL;
+	//create new page
+	struct Page *newpage = page_alloc(ALLOC_ZERO);
+	cprintf("[pgdir_walk]: pte==%p, newpage==%p pde_idx=%x pte_idx=%x\n", tmp, newpage, pde_idx, pte_idx);
+	if(NULL == newpage)
+		return NULL;
+	newpage->pp_ref++; //remember this!!	
+	pgdir[pde_idx] = PTE_ADDR(page2pa(newpage)) | PTE_U | PTE_P | PTE_W;
+	tmp = KADDR(PTE_ADDR(pgdir[pde_idx])); //update tmp, otherwise I get the wrong info
+	cprintf("[pgdir_walk]: pgdir[pde_idx]=%x\n", pgdir[pde_idx]);
+	return &tmp[pte_idx];
 }
 
 //
@@ -611,6 +630,20 @@ static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
 	// Fill this function in
+	uint32_t uplimit = ROUNDUP(va, PGSIZE);
+	uintptr_t t_va = va;
+	physaddr_t t_pa = pa;
+	size_t i;
+
+	for(i = 0; i < uplimit; ++i)
+	{
+		pte_t *ptentry = pgdir_walk(pgdir, (const void *)t_va, 1);
+		assert(ptentry); //who knows what, maybe out of memory?
+		*ptentry = PTE_ADDR(t_pa) | perm | PTE_P;
+		t_va += PGSIZE;
+		t_pa += PGSIZE;
+	}
+	cprintf("boot_map_region() success.\n");
 }
 
 //
@@ -641,6 +674,25 @@ int
 page_insert(pde_t *pgdir, struct Page *pp, void *va, int perm)
 {
 	// Fill this function in
+	cprintf("In [page_insert] NOW!!\n");
+	pte_t *ptentry;
+	physaddr_t pa;
+	ptentry = pgdir_walk(pgdir, va, 1);
+	cprintf("[page_insert]: 0 -- pgdir=%p, va=%p, ptentry=%p\n", pgdir, va, ptentry);
+	if(!ptentry)
+		return -E_NO_MEM;
+	cprintf("[page_insert]: 1 -- Initial==%x\n", *ptentry);
+	pp->pp_ref++; //Because page_remove will decref page, which may cause the page to be freed!!!! So I have to increase the ref here first. THIS ERROR HAS WASTED A WHOLE AFTERNOON OF MY LIFE, WTH!!!!
+	if((*ptentry) & PTE_P){
+		//already existed
+		page_remove(pgdir, va);
+	}
+
+	pa = page2pa(pp);
+	cprintf("[page_insert]: 2 --  PTE==%x\n", PTE_ADDR(pa) | perm | PTE_P);
+	*ptentry = PTE_ADDR(pa) | perm | PTE_P;
+	//if(!pp->pp_ref)
+	//	pp->pp_ref++; //Have to increase the ref before page_remove() The reasons are written above.
 	return 0;
 }
 
@@ -659,7 +711,15 @@ struct Page *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 {
 	// Fill this function in
-	return NULL;
+	struct Page *result;
+	pte_t *tmp = pgdir_walk(pgdir, va, 0); //Not create since the goal is to lookup
+	cprintf("In [page_lookup]: va=%x pte = %p, *pte=%x\n", va, tmp, *tmp);
+	if(!tmp || !((*tmp) & PTE_P)) //check whether pte or the pa is valid
+		return NULL;
+	if(pte_store)
+		*pte_store = tmp;
+	result = pa2page(PTE_ADDR(*tmp));	
+	return result;
 }
 
 //
@@ -681,6 +741,22 @@ void
 page_remove(pde_t *pgdir, void *va)
 {
 	// Fill this function in
+	cprintf("DEBUG In [page_remove] Now.\n");
+	pte_t *ptentry;
+	struct Page *pp = page_lookup(pgdir, va, &ptentry);
+	//page_decref doe not judge whether pp is NULL, which might 
+	//case a NULL pointer error, so need to judge it myself
+	if(!pp)
+		return;
+	cprintf("[page_remove]: Before %d\n", pp->pp_ref);
+	page_decref(pp);
+	cprintf("[page_remove]: After %d ptentry=%x\n", pp->pp_ref, ptentry);
+	if(ptentry){
+		cprintf("[page_remove]: DEBUG ????? *ptentry=%x\n", ptentry);
+		*ptentry = 0;
+		tlb_invalidate(pgdir, va);
+	}
+	cprintf("[page_remove]: Clearup *ptentry=%x\n", *ptentry);
 }
 
 //
@@ -899,10 +975,12 @@ check_va2pa(pde_t *pgdir, uintptr_t va)
 {
 	pte_t *p;
 
+	cprintf("[check_va2pa]: 1 -- pgdir=%p, pde=%x, pgdir[pde]=%x\n", pgdir, PDX(va), pgdir[PDX(va)]);
 	pgdir = &pgdir[PDX(va)];
 	if (!(*pgdir & PTE_P))
 		return ~0;
 	p = (pte_t*) KADDR(PTE_ADDR(*pgdir));
+	cprintf("[check_va2pa]: 2 -- p=%p, pte=%x, p[pte]=%x\n", pgdir, PTX(va), p[PTX(va)]);
 	if (!(p[PTX(va)] & PTE_P))
 		return ~0;
 	return PTE_ADDR(p[PTX(va)]);
@@ -947,7 +1025,9 @@ check_page(void)
 	page_free(pp0);
 	assert(page_insert(kern_pgdir, pp1, 0x0, PTE_W) == 0);
 	assert(PTE_ADDR(kern_pgdir[0]) == page2pa(pp0));
+	cprintf("[check_page]: %x %x\n", check_va2pa(kern_pgdir, 0x0), page2pa(pp1));
 	assert(check_va2pa(kern_pgdir, 0x0) == page2pa(pp1));
+	cprintf("%d %d\n", pp0->pp_ref, pp1->pp_ref);
 	assert(pp1->pp_ref == 1);
 	assert(pp0->pp_ref == 1);
 
